@@ -98,7 +98,11 @@ class Session:
         self._task_image_capture.cancel()
         # Put the recorded video into the queue.
         self._items.put_nowait(
-            MediaContainer(self._raw_stream.getvalue(), self._video_mime_type, self._video_recording_started_at, float(self._cam.framerate))
+            MediaContainer(
+                self._raw_stream.getvalue(),
+                self._video_mime_type,
+                self._video_recording_started_at,
+                float(self._cam.framerate))
         )
         self._in_progress = False
         self.dispose()
