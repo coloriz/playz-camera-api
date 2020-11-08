@@ -70,7 +70,7 @@ async def capture_video_and_upload(
     await upload_to_server(endpoint, token, path, data, 'video/mp4')
 
 
-def error_response(error: Exception, msg: Optional[str] = None, code: int = 400):
+def error_response(error: Exception, msg: Optional[str] = None, code: int = 500):
     if not msg:
         msg = str(error)
     return web.json_response({'msg': msg, 'type': type(error).__name__, 'code': code}, status=code)
@@ -118,7 +118,7 @@ async def handle_post_camera(request: web.Request):
         else:
             raise ValueError(f"Unknown 'mode': {mode}. should be either 'image' or 'video'.")
     except KeyError as e:
-        return error_response(e, f'A required key {e} is missing.')
+        return error_response(e, f'A required key {e} is missing.', 400)
     except Exception as e:
         return error_response(e)
 
@@ -168,7 +168,7 @@ async def handle_put_camera_settings(request: web.Request):
         cam.framerate = _framerate
         cam.rotation = _rotation
         cam.exposure_mode = _exposure_mode
-        return error_response(e)
+        return error_response(e, code=400)
 
     return await handle_get_camera_settings(request)
 
@@ -208,14 +208,14 @@ async def handle_get_session(request: web.Request):
         else:
             raise ValueError(f"Unknown cmd={cmd}. should be one of [enter, exit, interrupt].")
     except KeyError as e:
-        return error_response(e, f'A required parameter {e} is missing.')
+        return error_response(e, f'A required parameter {e} is missing.', 400)
     except PiCameraAlreadyRecording as e:
         await session_manager.destroy_silently()
         return error_response(e, 'The camera is busy.', 429)
     except SessionAlreadyExists as e:
-        return error_response(e, 'Running session already exists.', code=409)
+        return error_response(e, 'Running session already exists.', 409)
     except SessionNotExists as e:
-        return error_response(e, 'No running session.', code=404)
+        return error_response(e, 'No running session.', 404)
     except Exception as e:
         return error_response(e)
 
