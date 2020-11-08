@@ -147,8 +147,7 @@ class Session:
 
 
 class SessionManager(metaclass=Singleton):
-    def __init__(self, camera: PiCamera, session_timeout: float = 60.0) -> NoReturn:
-        self._cam: PiCamera = camera
+    def __init__(self, session_timeout: float = 60.0) -> NoReturn:
         self.__instance: Optional[Session] = None
         self._timeout: float = session_timeout
         self._task_watchdog: Optional[asyncio.Task] = None
@@ -175,7 +174,7 @@ class SessionManager(metaclass=Singleton):
     def create(self, *args, **kwargs) -> Session:
         if self.__instance:
             raise SessionAlreadyExists('A session can only exist only one at any given time.')
-        self.__instance = Session(self._cam, *args, **kwargs)
+        self.__instance = Session(*args, **kwargs)
         self.__instance.on_stopping.attach(self._cancel_watchdog)
         self.__instance.on_disposed.attach(self._empty_session)
         self._task_watchdog = asyncio.create_task(self._timeout_watchdog())

@@ -176,6 +176,7 @@ async def handle_put_camera_settings(request: web.Request):
 @routes.get('/session')
 async def handle_get_session(request: web.Request):
     config = request.config_dict
+    cam = config['camera']
     session_manager = config['session_manager']
     uploader = config['uploader']
     try:
@@ -186,7 +187,7 @@ async def handle_get_session(request: web.Request):
             assert entry_datetime.isdigit(), "'entry_datetime' should be the form of 'YYYYmmddHHMMSS'"
             capture_interval = float(request.query.get('capture_interval', config['capture_interval']))
 
-            session = session_manager.create(uid, entry_datetime)
+            session = session_manager.create(cam, uid, entry_datetime)
             session.start(capture_interval, 'jpeg', 'h264',
                           level='4.2', bitrate=config['bitrate'], quality=config['quality'])
             return web.json_response({'session': str(session)}, status=201)

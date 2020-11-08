@@ -45,7 +45,7 @@ async def initialize(app: web.Application):
     cam.exposure_mode = opt.exposure_mode
     app['camera'] = cam
     # One and only session manager
-    app['session_manager'] = SessionManager(cam)
+    app['session_manager'] = SessionManager()
     # Item uploader
     app['uploader'] = ItemUploader(opt.upload_endpoint, opt.module_id, opt.token)
     # Settings
