@@ -2,7 +2,8 @@ import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import NamedTuple, Optional, NoReturn, Iterable
+from tempfile import NamedTemporaryFile
+from typing import NamedTuple, Optional, NoReturn, Iterable, BinaryIO
 
 from aiohttp import ClientSession, FormData
 
@@ -35,7 +36,10 @@ class Event:
             await handler(*args, **kwargs)
 
 
-async def convert_raw_video_to_mp4_stream(raw_stream: bytes, framerate: float, ffmpeg_bin: str = 'ffmpeg') -> bytes:
+async def convert_raw_video_to_mp4_stream(raw_stream: BinaryIO,
+                                          framerate: float,
+                                          ffmpeg_bin: str = 'ffmpeg') -> BinaryIO:
+    mp4_stream = NamedTemporaryFile()
     proc = await asyncio.create_subprocess_exec(
         ffmpeg_bin,
         '-hide_banner',
@@ -45,13 +49,13 @@ async def convert_raw_video_to_mp4_stream(raw_stream: bytes, framerate: float, f
         '-an',
         '-c:v', 'copy',
         '-f', 'mp4',
-        '-movflags', 'empty_moov',
-        '-',
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
+        # '-movflags', 'empty_moov',
+        '-y',
+        mp4_stream.name,
+        stdin=raw_stream,
         stderr=None
     )
-    mp4_stream, _ = await proc.communicate(raw_stream)
+    await proc.wait()
 
     return mp4_stream
 
@@ -65,7 +69,7 @@ def bytes_for_humans(n: int) -> str:
 
 
 class MediaContainer(NamedTuple):
-    data: bytes
+    file: BinaryIO
     mimetype: str
     captured_at: datetime
     framerate: Optional[float] = None
@@ -105,7 +109,7 @@ class MediaUploader(metaclass=Singleton):
             while True:
                 # Get a work item out of the queue.
                 upload_path, media = await self._q.get()
-                data = media.data
+                file = media.file
                 mimetype = media.mimetype
                 captured_at = media.captured_at
 
@@ -119,7 +123,7 @@ class MediaUploader(metaclass=Singleton):
                 elif media.mimetype.startswith('video/'):
                     ext = '.mp4'
                     # Convert to mp4
-                    data = await convert_raw_video_to_mp4_stream(media.data, media.framerate)
+                    file = await convert_raw_video_to_mp4_stream(file, media.framerate)
 
                 # Check if ext is set
                 if not ext:
@@ -128,13 +132,18 @@ class MediaUploader(metaclass=Singleton):
                 filename = self.make_filename(captured_at, ext)
                 upload_path_full = f'/{upload_path / filename}'
 
+                # Get the size of a file object
+                file.seek(0, 2)
+                filesize = file.tell()
+                file.seek(0)
+
                 form = FormData()
                 form.add_field('token', self._token)
                 # Prepend "/" to path
                 form.add_field('upload_path', upload_path_full)
-                form.add_field('upload', data, content_type=mimetype, filename=filename)
+                form.add_field('upload', file, content_type=mimetype, filename=filename)
 
-                log.info(f'{name}: upload_path: {upload_path_full}, size: {bytes_for_humans(len(data))}')
+                log.info(f'{name}: upload_path: {upload_path_full}, size: {bytes_for_humans(filesize)}')
 
                 async with session.post(self._upload_endpoint, data=form) as res:
                     log.info(f'{name}: Response from the server: {repr(res)}, {await res.text()}')

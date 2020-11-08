@@ -1,11 +1,11 @@
 import asyncio
 from datetime import datetime
-from io import BytesIO
+from tempfile import TemporaryFile
 from typing import Optional, NoReturn, List
 
 from picamera import PiCamera, PiCameraAlreadyRecording, PiCameraNotRecording
 
-from util import Event, MediaContainer, Singleton, log
+from util import Event, MediaContainer, Singleton, log, bytes_for_humans
 
 
 class SessionAlreadyExists(Exception):
@@ -34,7 +34,7 @@ class Session:
         self._cam = camera
         self._uid = uid
         self._sid = sid
-        self._raw_stream = BytesIO()
+        self._raw_stream = TemporaryFile()
         self._items = []
         self._task_image_capture = None
         self._video_recording_started_at = None
@@ -94,13 +94,15 @@ class Session:
         await self.on_stopping()
         # Stop video recording
         self._cam.stop_recording()
+        log.debug(f'{self}: Video recording stopped.')
         # Stop image capturing
         self._task_image_capture.cancel()
         await self._task_image_capture
         # Put the recorded video into the list.
+        self._raw_stream.seek(0)
         self._items.append(
             MediaContainer(
-                self._raw_stream.getvalue(),
+                self._raw_stream,
                 self._video_mime_type,
                 self._video_recording_started_at,
                 float(self._cam.framerate))
@@ -110,22 +112,33 @@ class Session:
 
         return self._items
 
-    async def _capture_images(self, interval: float, image_format: str) -> NoReturn:
+    async def _capture_image_on_event(self, event: asyncio.Event, image_format: str) -> NoReturn:
         try:
-            stream = BytesIO()
-            for _ in self._cam.capture_continuous(stream, format=image_format, use_video_port=True):
+            while True:
+                await event.wait()
+                stream = TemporaryFile()
+                self._cam.capture(stream, image_format, use_video_port=True)
                 captured_at = datetime.now()
-                filesize = stream.truncate()
+                filesize = stream.tell()
                 stream.seek(0)
-                self._items.append(MediaContainer(stream.getvalue(), self._image_mime_type, captured_at))
-                log.debug(f'{self}: A new image captured at {captured_at.isoformat()}. ({filesize} bytes)')
+                self._items.append(MediaContainer(stream, self._image_mime_type, captured_at))
+                log.debug(f'{self}: New image captured at {captured_at.isoformat()}. ({bytes_for_humans(filesize)})')
+                event.clear()
+        except asyncio.CancelledError:
+            pass
 
+    async def _capture_images(self, interval: float, image_format: str) -> NoReturn:
+        event = asyncio.Event()
+        task = asyncio.create_task(self._capture_image_on_event(event, image_format))
+        try:
+            while True:
+                event.set()
                 await asyncio.sleep(interval)
         except asyncio.CancelledError:
+            task.cancel()
+            await task
             log.debug(f'{self}: Gracefully stop continous capturing.')
             log.debug(f'{self}: Total {len(self._items)} images captured.')
-
-        log.debug(f'{self}: Image capturing task finished.')
 
     @property
     def is_running(self) -> bool:
@@ -153,7 +166,7 @@ class SessionManager(metaclass=Singleton):
     async def _empty_session(self) -> NoReturn:
         self.__instance = None
 
-    async def _timeout_watchdog(self):
+    async def _timeout_watchdog(self) -> NoReturn:
         log.debug(f'Timeout watchdog initialized. Automatically destroy the session in {self._timeout} seconds')
         try:
             await asyncio.sleep(self._timeout)

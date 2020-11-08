@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
+from typing import Optional, BinaryIO
 from urllib.parse import urljoin
 
 from picamera import PiCamera, PiCameraAlreadyRecording
@@ -12,7 +12,7 @@ from session import SessionAlreadyExists, SessionNotExists, SessionManager
 from util import MediaUploader, MediaContainer
 
 
-async def capture_image(cam: PiCamera, delay: float, image_format='jpeg'):
+async def capture_image(cam: PiCamera, delay: float, image_format='jpeg') -> BinaryIO:
     """Capture an image"""
     # Insert a delay before taking an image
     if delay > 0:
@@ -21,11 +21,12 @@ async def capture_image(cam: PiCamera, delay: float, image_format='jpeg'):
     # Trigger a shutter
     stream = BytesIO()
     cam.capture(stream, image_format, use_video_port=True)
+    stream.seek(0)
 
-    return stream.getvalue()
+    return stream
 
 
-async def capture_video(cam: PiCamera, delay: float, timeout: float, video_format='h264', **kwargs):
+async def capture_video(cam: PiCamera, delay: float, timeout: float, video_format='h264', **kwargs) -> BinaryIO:
     """Capture a video"""
     # Insert a delay before recording
     if delay > 0:
@@ -37,25 +38,24 @@ async def capture_video(cam: PiCamera, delay: float, timeout: float, video_forma
     cam.wait_recording(0)
     await asyncio.sleep(timeout)
     cam.stop_recording()
+    raw_stream.seek(0)
 
-    return raw_stream.getvalue()
+    return raw_stream
 
 
-async def capture_image_and_upload(
-        cam: PiCamera, delay: float,
-        uploader: MediaUploader, upload_path: Path, captured_at: datetime):
+async def capture_image_and_upload(cam: PiCamera, delay: float,
+                                   uploader: MediaUploader, upload_path: Path, captured_at: datetime):
     """Capture an image and upload"""
-    data = await capture_image(cam, delay, 'jpeg')
-    uploader.put_items(upload_path, [MediaContainer(data, 'image/jpeg', captured_at)])
+    stream = await capture_image(cam, delay, 'jpeg')
+    uploader.put_items(upload_path, [MediaContainer(stream, 'image/jpeg', captured_at)])
 
 
-async def capture_video_and_upload(
-        cam: PiCamera, delay: float, timeout: float,
-        uploader: MediaUploader, upload_path: Path, captured_at: datetime,
-        **kwargs):
+async def capture_video_and_upload(cam: PiCamera, delay: float, timeout: float,
+                                   uploader: MediaUploader, upload_path: Path, captured_at: datetime,
+                                   **kwargs):
     """Capture a video and upload"""
-    data = await capture_video(cam, delay, timeout, 'h264', **kwargs)
-    uploader.put_items(upload_path, [MediaContainer(data, 'video/H264', captured_at, float(cam.framerate))])
+    stream = await capture_video(cam, delay, timeout, 'h264', **kwargs)
+    uploader.put_items(upload_path, [MediaContainer(stream, 'video/H264', captured_at, float(cam.framerate))])
 
 
 def error_response(error: Exception, msg: Optional[str] = None, code: int = 500):
