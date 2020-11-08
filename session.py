@@ -160,6 +160,8 @@ class SessionManager(metaclass=Singleton):
         log.debug(f'Timeout watchdog initialized. Automatically destroy the session in {self._timeout} seconds')
         try:
             await asyncio.sleep(self._timeout)
+            # Watchdog invoked. No coming back.
+            self.__instance.on_stopping.detach(self._cancel_watchdog)
             self.destroy_silently()
             log.warning('Watchdog invoked. The session has been destroyed.')
         except asyncio.CancelledError:
