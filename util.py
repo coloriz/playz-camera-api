@@ -125,8 +125,7 @@ class ItemUploader:
                 log.info(f'{name}: filename: {filename}, upload_path: {upload_path_full}, size: {len(data)}')
 
                 async with session.post(self._upload_endpoint, data=form) as res:
-                    log.info(f'{name}: Response from the server: {repr(res)}')
-                    log.info(f'{name}: {await res.text()}')
+                    log.info(f'{name}: Response from the server: {repr(res)}, {await res.text()}')
 
                 # Notify the queue that the work item has been processed.
                 q.task_done()
