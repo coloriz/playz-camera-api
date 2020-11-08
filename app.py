@@ -6,7 +6,7 @@ from picamera import PiCamera
 
 from api_v1 import api_v1
 from session import SessionManager
-from util import ItemUploader
+from util import MediaUploader
 
 parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter, add_help=False)
 parser.add_argument('--help', action='help', help='show this help message and exit')
@@ -47,7 +47,7 @@ async def initialize(app: web.Application):
     # One and only session manager
     app['session_manager'] = SessionManager()
     # Item uploader
-    app['uploader'] = ItemUploader(opt.upload_endpoint, opt.module_id, opt.token)
+    app['uploader'] = MediaUploader(opt.upload_endpoint, opt.module_id, opt.token)
     # Settings
     app['bitrate'] = opt.bitrate
     app['quality'] = opt.quality
@@ -61,7 +61,7 @@ async def initialize(app: web.Application):
 
 
 async def cleanup(app):
-    # TODO: Dispose uploader
+    await app['uploader'].dispose()
     await app['session_manager'].destroy_silently()
     app['camera'].close()
 

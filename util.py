@@ -1,9 +1,8 @@
 import asyncio
 import logging
-from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import NamedTuple, Optional, NoReturn
+from typing import NamedTuple, Optional, NoReturn, Iterable
 
 from aiohttp import ClientSession, FormData
 
@@ -57,6 +56,14 @@ async def convert_raw_video_to_mp4_stream(raw_stream: bytes, framerate: float, f
     return mp4_stream
 
 
+def bytes_for_humans(n: int) -> str:
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB']:
+        if n < 1024.0:
+            return f'{n:.1f}{unit}'
+        n /= 1024.0
+    return f'{n:.1f}YB'
+
+
 class MediaContainer(NamedTuple):
     data: bytes
     mimetype: str
@@ -64,35 +71,40 @@ class MediaContainer(NamedTuple):
     framerate: Optional[float] = None
 
 
-class ItemUploader:
-    def __init__(self, upload_endpoint: str, module_id: str, token: str) -> NoReturn:
+class MediaUploader(metaclass=Singleton):
+    def __init__(self, upload_endpoint: str, module_id: str, token: str, workers: int = 4) -> NoReturn:
         self._upload_endpoint = upload_endpoint
         self._module_id = module_id
         self._token = token
 
-    async def upload(self, upload_path: Path, q: asyncio.Queue, workers: int = 4):
         # Create worker tasks to process the queue concurrently.
-        tasks = []
-        for i in range(workers):
-            task = asyncio.create_task(self._worker(upload_path, q, name=f'worker-{i}'))
-            tasks.append(task)
+        self._tasks = [asyncio.create_task(self._worker(f'worker-{i}')) for i in range(workers)]
+        self._q = asyncio.Queue()
 
+    def put_items(self, upload_path: Path, items: Iterable[MediaContainer]) -> NoReturn:
+        for item in items:
+            self._q.put_nowait((upload_path, item))
+
+    async def dispose(self) -> NoReturn:
         # Wait until the queue is fully processed.
-        await q.join()
+        await self._q.join()
 
         # Cancel our worker tasks.
-        for task in tasks:
+        for task in self._tasks:
             task.cancel()
 
         # Wait until all worker tasks are cancelled.
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*self._tasks, return_exceptions=True)
 
-    async def _worker(self, upload_path: Path, q: asyncio.Queue, name: str):
+    def make_filename(self, captured_at: datetime, ext: str) -> str:
+        return f'{self._module_id}-{captured_at.strftime("%Y%m%d%H%M%S")}{ext}'
+
+    async def _worker(self, name: str) -> NoReturn:
         session = ClientSession()
         try:
             while True:
                 # Get a work item out of the queue.
-                media = await q.get()
+                upload_path, media = await self._q.get()
                 data = media.data
                 mimetype = media.mimetype
                 captured_at = media.captured_at
@@ -113,7 +125,7 @@ class ItemUploader:
                 if not ext:
                     log.warning('ext is not set!')
 
-                filename = f'{self._module_id}-{captured_at.strftime("%Y%m%d%H%M%S")}{ext}'
+                filename = self.make_filename(captured_at, ext)
                 upload_path_full = f'/{upload_path / filename}'
 
                 form = FormData()
@@ -122,12 +134,12 @@ class ItemUploader:
                 form.add_field('upload_path', upload_path_full)
                 form.add_field('upload', data, content_type=mimetype, filename=filename)
 
-                log.info(f'{name}: filename: {filename}, upload_path: {upload_path_full}, size: {len(data)}')
+                log.info(f'{name}: upload_path: {upload_path_full}, size: {bytes_for_humans(len(data))}')
 
                 async with session.post(self._upload_endpoint, data=form) as res:
                     log.info(f'{name}: Response from the server: {repr(res)}, {await res.text()}')
 
                 # Notify the queue that the work item has been processed.
-                q.task_done()
+                self._q.task_done()
         finally:
             await session.close()

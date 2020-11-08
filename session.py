@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime
 from io import BytesIO
-from typing import Optional, NoReturn
+from typing import Optional, NoReturn, List
 
 from picamera import PiCamera, PiCameraAlreadyRecording, PiCameraNotRecording
 
@@ -35,7 +35,7 @@ class Session:
         self._uid = uid
         self._sid = sid
         self._raw_stream = BytesIO()
-        self._items = asyncio.Queue()
+        self._items = []
         self._task_image_capture = None
         self._video_recording_started_at = None
         self._video_mime_type = None
@@ -81,7 +81,7 @@ class Session:
         log.info(f'{self}: Session has started.')
         self._in_progress = True
 
-    async def stop(self) -> asyncio.Queue:
+    async def stop(self) -> List[MediaContainer]:
         """Stop recording and return items"""
         log.info(f'{self}: Attempting to stop...')
         if self._disposed:
@@ -97,8 +97,8 @@ class Session:
         # Stop image capturing
         self._task_image_capture.cancel()
         await self._task_image_capture
-        # Put the recorded video into the queue.
-        self._items.put_nowait(
+        # Put the recorded video into the list.
+        self._items.append(
             MediaContainer(
                 self._raw_stream.getvalue(),
                 self._video_mime_type,
@@ -117,13 +117,13 @@ class Session:
                 captured_at = datetime.now()
                 filesize = stream.truncate()
                 stream.seek(0)
-                self._items.put_nowait(MediaContainer(stream.getvalue(), self._image_mime_type, captured_at))
+                self._items.append(MediaContainer(stream.getvalue(), self._image_mime_type, captured_at))
                 log.debug(f'{self}: A new image captured at {captured_at.isoformat()}. ({filesize} bytes)')
 
                 await asyncio.sleep(interval)
         except asyncio.CancelledError:
             log.debug(f'{self}: Gracefully stop continous capturing.')
-            log.debug(f'{self}: Total {self._items.qsize()} images captured.')
+            log.debug(f'{self}: Total {len(self._items)} images captured.')
 
         log.debug(f'{self}: Image capturing task finished.')
 

@@ -6,10 +6,10 @@ from typing import Optional
 from urllib.parse import urljoin
 
 from picamera import PiCamera, PiCameraAlreadyRecording
-from aiohttp import web, ClientSession, FormData
+from aiohttp import web
 
 from session import SessionAlreadyExists, SessionNotExists, SessionManager
-from util import convert_raw_video_to_mp4_stream, ItemUploader
+from util import MediaUploader, MediaContainer
 
 
 async def capture_image(cam: PiCamera, delay: float, image_format='jpeg'):
@@ -38,36 +38,24 @@ async def capture_video(cam: PiCamera, delay: float, timeout: float, video_forma
     await asyncio.sleep(timeout)
     cam.stop_recording()
 
-    # Convert the recorded raw H.264 video into .mp4
-    mp4_stream = await convert_raw_video_to_mp4_stream(raw_stream.getvalue(), float(cam.framerate))
-
-    return mp4_stream
+    return raw_stream.getvalue()
 
 
-async def upload_to_server(endpoint: str, token: str, path: Path, data: bytes, content_type: str):
-    form = FormData()
-    form.add_field('token', token)
-    # Prepend "/" to path
-    form.add_field('upload_path', f'/{path}')
-    form.add_field('upload', data, content_type=content_type, filename=path.name)
-
-    # Upload the data to the server asyncly
-    async with ClientSession() as session:
-        async with session.post(endpoint, data=form) as res:
-            pass
-
-
-async def capture_image_and_upload(cam: PiCamera, delay: float, endpoint: str, token: str, path: Path):
+async def capture_image_and_upload(
+        cam: PiCamera, delay: float,
+        uploader: MediaUploader, upload_path: Path, captured_at: datetime):
     """Capture an image and upload"""
-    data = await capture_image(cam, delay)
-    await upload_to_server(endpoint, token, path, data, 'image/jpeg')
+    data = await capture_image(cam, delay, 'jpeg')
+    uploader.put_items(upload_path, [MediaContainer(data, 'image/jpeg', captured_at)])
 
 
 async def capture_video_and_upload(
-        cam: PiCamera, delay: float, timeout: float, endpoint: str, token: str, path: Path, **kwargs):
+        cam: PiCamera, delay: float, timeout: float,
+        uploader: MediaUploader, upload_path: Path, captured_at: datetime,
+        **kwargs):
     """Capture a video and upload"""
-    data = await capture_video(cam, delay, timeout, **kwargs)
-    await upload_to_server(endpoint, token, path, data, 'video/mp4')
+    data = await capture_video(cam, delay, timeout, 'h264', **kwargs)
+    uploader.put_items(upload_path, [MediaContainer(data, 'video/H264', captured_at, float(cam.framerate))])
 
 
 def error_response(error: Exception, msg: Optional[str] = None, code: int = 500):
@@ -100,6 +88,7 @@ async def handle_get_camera(request: web.Request):
 async def handle_post_camera(request: web.Request):
     config = request.config_dict
     cam: PiCamera = config['camera']
+    uploader: MediaUploader = config['uploader']
     try:
         params = await request.json()
         uid = int(params['uid'])
@@ -108,13 +97,15 @@ async def handle_post_camera(request: web.Request):
         delay = float(params.get('delay', config['delay']))
         timeout = float(params.get('timeout', config['timeout']))
         mode = params.get('mode', 'video')
+        upload_path = Path(f'{uid}/{entry_datetime}/')
+        captured_at = datetime.now()
         if mode == 'image':
-            path = Path(f'{uid}/{entry_datetime}/{config["module_id"]}-{datetime.now().strftime("%Y%m%d%H%M%S")}.jpg')
-            coro = capture_image_and_upload(cam, delay, config['upload_endpoint'], config['token'], path)
+            coro = capture_image_and_upload(cam, delay, uploader, upload_path, captured_at)
+            filename = uploader.make_filename(captured_at, '.jpg')
         elif mode == 'video':
-            path = Path(f'{uid}/{entry_datetime}/{config["module_id"]}-{datetime.now().strftime("%Y%m%d%H%M%S")}.mp4')
-            coro = capture_video_and_upload(cam, delay, timeout, config['upload_endpoint'], config['token'], path,
+            coro = capture_video_and_upload(cam, delay, timeout, uploader, upload_path, captured_at,
                                             level='4.2', bitrate=config['bitrate'], quality=config['quality'])
+            filename = uploader.make_filename(captured_at, '.mp4')
         else:
             raise ValueError(f"Unknown 'mode': {mode}. should be either 'image' or 'video'.")
     except KeyError as e:
@@ -125,7 +116,7 @@ async def handle_post_camera(request: web.Request):
     # Run tasks asyncly
     asyncio.create_task(coro)
 
-    return web.json_response({'uri': urljoin(config['upload_root'], str(path))})
+    return web.json_response({'uri': urljoin(config['upload_root'], str(upload_path / filename))})
 
 
 @routes.get('/camera/settings')
@@ -178,7 +169,7 @@ async def handle_get_session(request: web.Request):
     config = request.config_dict
     cam: PiCamera = config['camera']
     session_manager: SessionManager = config['session_manager']
-    uploader: ItemUploader = config['uploader']
+    uploader: MediaUploader = config['uploader']
     try:
         cmd = request.query['cmd']
         if cmd == 'enter':
@@ -196,7 +187,7 @@ async def handle_get_session(request: web.Request):
             items = await session.stop()
             # Upload items
             upload_path = Path(f'{session.uid}/{session.sid}/')
-            asyncio.create_task(uploader.upload(upload_path, items))
+            uploader.put_items(upload_path, items)
             return web.json_response({
                 'session': str(session),
                 'uri': urljoin(config['upload_root'], str(upload_path))
