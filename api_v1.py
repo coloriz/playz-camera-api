@@ -8,8 +8,8 @@ from urllib.parse import urljoin
 from picamera import PiCamera, PiCameraAlreadyRecording
 from aiohttp import web, ClientSession, FormData
 
-from session import SessionAlreadyExists, SessionNotExists
-from util import convert_raw_video_to_mp4_stream
+from session import SessionAlreadyExists, SessionNotExists, SessionManager
+from util import convert_raw_video_to_mp4_stream, ItemUploader
 
 
 async def capture_image(cam: PiCamera, delay: float, image_format='jpeg'):
@@ -78,7 +78,7 @@ def error_response(error: Exception, msg: Optional[str] = None, code: int = 400)
 
 def assert_camera_idle(f):
     def inner(request: web.Request):
-        cam = request.config_dict['camera']
+        cam: PiCamera = request.config_dict['camera']
         if cam.recording:
             return error_response(PiCameraAlreadyRecording('The camera is busy.'), code=429)
         return f(request)
@@ -91,7 +91,7 @@ routes = web.RouteTableDef()
 
 @routes.get('/camera')
 async def handle_get_camera(request: web.Request):
-    cam = request.config_dict['camera']
+    cam: PiCamera = request.config_dict['camera']
     return web.json_response({'recording': cam.recording})
 
 
@@ -99,7 +99,7 @@ async def handle_get_camera(request: web.Request):
 @assert_camera_idle
 async def handle_post_camera(request: web.Request):
     config = request.config_dict
-    cam = config['camera']
+    cam: PiCamera = config['camera']
     try:
         params = await request.json()
         uid = int(params['uid'])
@@ -130,7 +130,7 @@ async def handle_post_camera(request: web.Request):
 
 @routes.get('/camera/settings')
 async def handle_get_camera_settings(request: web.Request):
-    cam = request.config_dict['camera']
+    cam: PiCamera = request.config_dict['camera']
     width, height = cam.resolution
     return web.json_response({
         'width': width,
@@ -146,7 +146,7 @@ async def handle_get_camera_settings(request: web.Request):
 async def handle_put_camera_settings(request: web.Request):
     """Update camera settings"""
     # Back up original settings
-    cam = request.config_dict['camera']
+    cam: PiCamera = request.config_dict['camera']
     _resolution = cam.resolution
     _framerate = cam.framerate
     _rotation = cam.rotation
@@ -176,9 +176,9 @@ async def handle_put_camera_settings(request: web.Request):
 @routes.get('/session')
 async def handle_get_session(request: web.Request):
     config = request.config_dict
-    cam = config['camera']
-    session_manager = config['session_manager']
-    uploader = config['uploader']
+    cam: PiCamera = config['camera']
+    session_manager: SessionManager = config['session_manager']
+    uploader: ItemUploader = config['uploader']
     try:
         cmd = request.query['cmd']
         if cmd == 'enter':
@@ -193,7 +193,7 @@ async def handle_get_session(request: web.Request):
             return web.json_response({'session': str(session)}, status=201)
         elif cmd == 'exit':
             session = session_manager.session
-            items = session.stop()
+            items = await session.stop()
             # Upload items
             upload_path = Path(f'{session.uid}/{session.sid}/')
             asyncio.create_task(uploader.upload(upload_path, items))
@@ -203,14 +203,14 @@ async def handle_get_session(request: web.Request):
             })
         elif cmd == 'interrupt':
             session = session_manager.session
-            session_manager.destroy()
+            await session_manager.destroy()
             return web.json_response({'session': str(session)})
         else:
             raise ValueError(f"Unknown cmd={cmd}. should be one of [enter, exit, interrupt].")
     except KeyError as e:
         return error_response(e, f'A required parameter {e} is missing.')
     except PiCameraAlreadyRecording as e:
-        session_manager.destroy_silently()
+        await session_manager.destroy_silently()
         return error_response(e, 'The camera is busy.', 429)
     except SessionAlreadyExists as e:
         return error_response(e, 'Running session already exists.', code=409)

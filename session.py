@@ -81,7 +81,7 @@ class Session:
         log.info(f'{self}: Session has started.')
         self._in_progress = True
 
-    def stop(self) -> asyncio.Queue:
+    async def stop(self) -> asyncio.Queue:
         """Stop recording and return items"""
         log.info(f'{self}: Attempting to stop...')
         if self._disposed:
@@ -91,11 +91,12 @@ class Session:
             log.error(f'{self} is not in progress!')
             raise PiCameraNotRecording
         # Fire on_stopping event
-        self.on_stopping()
+        await self.on_stopping()
         # Stop video recording
         self._cam.stop_recording()
         # Stop image capturing
         self._task_image_capture.cancel()
+        await self._task_image_capture
         # Put the recorded video into the queue.
         self._items.put_nowait(
             MediaContainer(
@@ -105,7 +106,7 @@ class Session:
                 float(self._cam.framerate))
         )
         self._in_progress = False
-        self.dispose()
+        await self.dispose()
 
         return self._items
 
@@ -130,20 +131,17 @@ class Session:
     def is_running(self) -> bool:
         return self._in_progress
 
-    def dispose(self) -> NoReturn:
+    async def dispose(self) -> NoReturn:
         if self._disposed:
             return
         if self._in_progress:
-            self.stop()
+            await self.stop()
             return
         # Dispose this session
         self._disposed = True
         # Fire on_disposed event
-        self.on_disposed()
+        await self.on_disposed()
         log.info(f'{self} has been disposed.')
-
-    def __del__(self) -> NoReturn:
-        self.dispose()
 
 
 class SessionManager(metaclass=Singleton):
@@ -152,7 +150,7 @@ class SessionManager(metaclass=Singleton):
         self._timeout: float = session_timeout
         self._task_watchdog: Optional[asyncio.Task] = None
 
-    def _empty_session(self) -> NoReturn:
+    async def _empty_session(self) -> NoReturn:
         self.__instance = None
 
     async def _timeout_watchdog(self):
@@ -161,14 +159,15 @@ class SessionManager(metaclass=Singleton):
             await asyncio.sleep(self._timeout)
             # Watchdog invoked. No coming back.
             self.__instance.on_stopping.detach(self._cancel_watchdog)
-            self.destroy_silently()
+            await self.destroy_silently()
             log.warning('Watchdog invoked. The session has been destroyed.')
         except asyncio.CancelledError:
             log.debug('Watchdog cancelled.')
 
-    def _cancel_watchdog(self):
+    async def _cancel_watchdog(self) -> NoReturn:
         if self._task_watchdog:
             self._task_watchdog.cancel()
+            await self._task_watchdog
             self._task_watchdog = None
 
     def create(self, *args, **kwargs) -> Session:
@@ -180,14 +179,14 @@ class SessionManager(metaclass=Singleton):
         self._task_watchdog = asyncio.create_task(self._timeout_watchdog())
         return self.__instance
 
-    def destroy(self) -> NoReturn:
+    async def destroy(self) -> NoReturn:
         if not self.__instance:
             raise SessionNotExists
-        self.__instance.dispose()
+        await self.__instance.dispose()
 
-    def destroy_silently(self) -> NoReturn:
+    async def destroy_silently(self) -> NoReturn:
         try:
-            self.destroy()
+            await self.destroy()
         except SessionNotExists:
             pass
 

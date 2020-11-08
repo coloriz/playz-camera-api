@@ -25,15 +25,15 @@ class Event:
     def __init__(self):
         self._handlers = []
 
-    def attach(self, handler):
+    def attach(self, handler) -> NoReturn:
         self._handlers.append(handler)
 
-    def detach(self, handler):
+    def detach(self, handler) -> NoReturn:
         self._handlers.remove(handler)
 
-    def __call__(self, *args, **kwargs):
+    async def __call__(self, *args, **kwargs) -> NoReturn:
         for handler in self._handlers:
-            handler(*args, **kwargs)
+            await handler(*args, **kwargs)
 
 
 async def convert_raw_video_to_mp4_stream(raw_stream: bytes, framerate: float, ffmpeg_bin: str = 'ffmpeg') -> bytes:

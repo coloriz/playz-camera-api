@@ -62,7 +62,7 @@ async def initialize(app: web.Application):
 
 async def cleanup(app):
     # TODO: Dispose uploader
-    app['session_manager'].destroy_silently()
+    await app['session_manager'].destroy_silently()
     app['camera'].close()
 
 
