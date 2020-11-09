@@ -158,7 +158,7 @@ class Session:
 
 
 class SessionManager(metaclass=Singleton):
-    def __init__(self, session_timeout: float = 60.0) -> NoReturn:
+    def __init__(self, session_timeout: float) -> NoReturn:
         self.__instance: Optional[Session] = None
         self._timeout: float = session_timeout
         self._task_watchdog: Optional[asyncio.Task] = None

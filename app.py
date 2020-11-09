@@ -21,6 +21,8 @@ parser.add_argument('-q', '--quality', default=23, type=int,
                     help='the quality that the encoder should attempt to maintain')
 parser.add_argument('-d', '--delay', default=0, type=float, help='default delay before recording (in second)')
 parser.add_argument('-t', '--timeout', default=5, type=float, help='default time to capture for (in second)')
+parser.add_argument('-st', '--session-timeout', default=300, type=float,
+                    help='default period of time before interrupting session (in seconds)')
 parser.add_argument('-ci', '--capture-interval', default=5, type=float,
                     help='default image capture interval during a session (in seconds)')
 parser.add_argument('--upload-endpoint', default='')
@@ -45,7 +47,7 @@ async def initialize(app: web.Application):
     cam.exposure_mode = opt.exposure_mode
     app['camera'] = cam
     # One and only session manager
-    app['session_manager'] = SessionManager()
+    app['session_manager'] = SessionManager(session_timeout=opt.session_timeout)
     # Item uploader
     app['uploader'] = MediaUploader(opt.upload_endpoint, opt.module_id, opt.token)
     # Settings
