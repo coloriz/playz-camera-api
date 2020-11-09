@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import TemporaryFile
 from typing import NamedTuple, Optional, NoReturn, Iterable, BinaryIO
 
 from aiohttp import ClientSession, FormData
@@ -39,7 +39,7 @@ class Event:
 async def convert_raw_video_to_mp4_stream(raw_stream: BinaryIO,
                                           framerate: float,
                                           ffmpeg_bin: str = 'ffmpeg') -> BinaryIO:
-    mp4_stream = NamedTemporaryFile()
+    mp4_stream = TemporaryFile()
     proc = await asyncio.create_subprocess_exec(
         ffmpeg_bin,
         '-hide_banner',
@@ -49,14 +49,16 @@ async def convert_raw_video_to_mp4_stream(raw_stream: BinaryIO,
         '-an',
         '-c:v', 'copy',
         '-f', 'mp4',
-        # '-movflags', 'empty_moov',
-        '-y',
-        mp4_stream.name,
+        '-movflags', 'empty_moov',
+        '-',
         stdin=raw_stream,
+        stdout=mp4_stream,
         stderr=None
     )
     await proc.wait()
 
+    mp4_stream.seek(0)
+    # Issue: aiohttp FormData serializer doesn't detect TemporaryFileWrapper(NamedTemporaryFile) as IOBase.
     return mp4_stream
 
 
