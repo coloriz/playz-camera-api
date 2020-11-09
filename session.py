@@ -73,13 +73,13 @@ class Session:
         self._video_recording_started_at = datetime.now()
         self._cam.start_recording(self._raw_stream, video_format, **kwargs)
         self._cam.wait_recording(0)
-        log.debug(f'{self}: Video recording started at {self._video_recording_started_at.isoformat()}. (MIME type: {self._video_mime_type})')
+        log.debug(f'Video recording started at {self._video_recording_started_at.isoformat()}. (MIME type: {self._video_mime_type})')
         # Start continuous captures
         self._image_mime_type = f'image/{image_format}'
         self._task_image_capture = asyncio.create_task(self._capture_images(image_capture_interval, image_format))
-        log.debug(f'{self}: Continuous image capturing started. (MIME type: {self._image_mime_type})')
-        log.info(f'{self}: Session has started.')
+        log.debug(f'Continuous image capturing started. (MIME type: {self._image_mime_type})')
         self._in_progress = True
+        log.info(f'{self}: Session has started.')
 
     async def stop(self) -> List[MediaContainer]:
         """Stop recording and return items"""
@@ -94,10 +94,12 @@ class Session:
         await self.on_stopping()
         # Stop video recording
         self._cam.stop_recording()
-        log.debug(f'{self}: Video recording stopped.')
+        log.debug(f'Video recording stopped.')
         # Stop image capturing
         self._task_image_capture.cancel()
         await self._task_image_capture
+        log.debug(f'Image capturing stopped.')
+        log.info(f'Total {len(self._items)} images captured.')
         # Put the recorded video into the list.
         self._raw_stream.seek(0)
         self._items.append(
@@ -122,7 +124,7 @@ class Session:
                 filesize = stream.tell()
                 stream.seek(0)
                 self._items.append(MediaContainer(stream, self._image_mime_type, captured_at))
-                log.debug(f'{self}: New image captured at {captured_at.isoformat()}. ({bytes_for_humans(filesize)})')
+                log.debug(f'New image captured at {captured_at.isoformat()}. ({bytes_for_humans(filesize)})')
                 event.clear()
         except asyncio.CancelledError:
             pass
@@ -135,10 +137,9 @@ class Session:
                 event.set()
                 await asyncio.sleep(interval)
         except asyncio.CancelledError:
+            log.debug('Cancel signal received. Gracefully stopping continous image capturing...')
             task.cancel()
             await task
-            log.debug(f'{self}: Gracefully stop continous capturing.')
-            log.debug(f'{self}: Total {len(self._items)} images captured.')
 
     @property
     def is_running(self) -> bool:
