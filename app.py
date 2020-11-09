@@ -17,7 +17,7 @@ parser.add_argument('-rot', '--rotation', default=0, type=int, choices=[0, 90, 1
 parser.add_argument('-em', '--exposure-mode', default='sports', choices=PiCamera.EXPOSURE_MODES.keys(),
                     help='set the exposure mode')
 parser.add_argument('-b', '--bitrate', default=6000000, type=int, help='set bitrate')
-parser.add_argument('-q', '--quality', default=17, type=int,
+parser.add_argument('-q', '--quality', default=23, type=int,
                     help='the quality that the encoder should attempt to maintain')
 parser.add_argument('-d', '--delay', default=0, type=float, help='default delay before recording (in second)')
 parser.add_argument('-t', '--timeout', default=5, type=float, help='default time to capture for (in second)')
