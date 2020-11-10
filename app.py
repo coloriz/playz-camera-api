@@ -34,8 +34,7 @@ parser.add_argument('--debug', action='store_true', help='enable debug mode')
 
 opt = parser.parse_args()
 
-if opt.debug:
-    logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG if opt.debug else logging.INFO)
 
 
 async def initialize(app: web.Application):
