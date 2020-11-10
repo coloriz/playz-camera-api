@@ -1,6 +1,7 @@
 import asyncio
-from datetime import datetime
+import datetime
 from tempfile import TemporaryFile
+from time import timezone
 from typing import Optional, NoReturn, List
 
 from picamera import PiCamera, PiCameraAlreadyRecording, PiCameraNotRecording
@@ -44,6 +45,8 @@ class Session:
         self.on_stopping = Event()
         self.on_disposed = Event()
 
+        self._tz = datetime.timezone(datetime.timedelta(seconds=-timezone))
+
     def __str__(self) -> str:
         return f"Session(" \
                f"uid={self._uid}, sid='{self._sid}', " \
@@ -70,7 +73,7 @@ class Session:
             raise PiCameraAlreadyRecording
         # Start recording a video
         self._video_mime_type = f'video/{video_format.upper()}'
-        self._video_recording_started_at = datetime.now()
+        self._video_recording_started_at = datetime.datetime.now(self._tz)
         self._cam.start_recording(self._raw_stream, video_format, **kwargs)
         self._cam.wait_recording(0)
         log.debug(f'Video recording started at {self._video_recording_started_at.isoformat()}. (MIME type: {self._video_mime_type})')
@@ -120,7 +123,7 @@ class Session:
                 await event.wait()
                 stream = TemporaryFile()
                 self._cam.capture(stream, image_format, use_video_port=True)
-                captured_at = datetime.now()
+                captured_at = datetime.datetime.now(self._tz)
                 filesize = stream.tell()
                 stream.seek(0)
                 self._items.append(MediaContainer(stream, self._image_mime_type, captured_at))
