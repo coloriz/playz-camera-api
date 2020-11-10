@@ -45,10 +45,11 @@ async def initialize(app: web.Application):
     cam.rotation = opt.rotation
     cam.exposure_mode = opt.exposure_mode
     app['camera'] = cam
-    # One and only session manager
-    app['session_manager'] = SessionManager(session_timeout=opt.session_timeout)
     # Item uploader
-    app['uploader'] = MediaUploader(opt.upload_endpoint, opt.module_id, opt.token)
+    uploader = MediaUploader(opt.upload_endpoint, opt.module_id, opt.token)
+    app['uploader'] = uploader
+    # One and only session manager
+    app['session_manager'] = SessionManager(opt.session_timeout, uploader)
     # Settings
     app['bitrate'] = opt.bitrate
     app['quality'] = opt.quality
@@ -62,8 +63,8 @@ async def initialize(app: web.Application):
 
 
 async def cleanup(app):
-    await app['uploader'].dispose()
     await app['session_manager'].destroy_silently()
+    await app['uploader'].dispose()
     app['camera'].close()
 
 

@@ -1,12 +1,13 @@
 import asyncio
-import datetime
+from datetime import datetime
+from pathlib import Path
 from tempfile import TemporaryFile
 from time import timezone
 from typing import Optional, NoReturn, List
 
 from picamera import PiCamera, PiCameraAlreadyRecording, PiCameraNotRecording
 
-from util import Event, MediaContainer, Singleton, log, bytes_for_humans
+from util import Event, MediaContainer, Singleton, log, bytes_for_humans, MediaUploader
 
 
 class SessionAlreadyExists(Exception):
@@ -162,10 +163,12 @@ class Session:
 
 
 class SessionManager(metaclass=Singleton):
-    def __init__(self, session_timeout: float) -> NoReturn:
+    def __init__(self, session_timeout: float, uploader: Optional[MediaUploader] = None) -> NoReturn:
         self.__instance: Optional[Session] = None
+        self._lock: asyncio.Lock = asyncio.Lock()
         self._timeout: float = session_timeout
         self._task_watchdog: Optional[asyncio.Task] = None
+        self._uploader = uploader
 
     async def _empty_session(self) -> NoReturn:
         self.__instance = None
@@ -176,8 +179,10 @@ class SessionManager(metaclass=Singleton):
             await asyncio.sleep(self._timeout)
             # Watchdog invoked. No coming back.
             self.__instance.on_stopping.detach(self._cancel_watchdog)
-            await self.destroy_silently()
+            await self.destroy(True)
             log.warning('Watchdog invoked. The session has been destroyed.')
+        except SessionNotExists:
+            log.warning("Watchdog invoked. But the session doesn't exist. Skipping...")
         except asyncio.CancelledError:
             log.debug('Watchdog cancelled.')
 
@@ -196,14 +201,22 @@ class SessionManager(metaclass=Singleton):
         self._task_watchdog = asyncio.create_task(self._timeout_watchdog())
         return self.__instance
 
-    async def destroy(self) -> NoReturn:
-        if not self.__instance:
-            raise SessionNotExists
-        await self.__instance.dispose()
+    async def destroy(self, upload: bool = True) -> List[MediaContainer]:
+        async with self._lock:
+            session = self.__instance
+            if not session:
+                raise SessionNotExists
+            items = await self.__instance.stop()
+        if upload:
+            assert self._uploader is not None, 'Uploader not specified.'
+            # Upload items
+            upload_path = Path(f'{session.uid}/{session.sid}/')
+            self._uploader.put_items(upload_path, items)
+        return items
 
     async def destroy_silently(self) -> NoReturn:
         try:
-            await self.destroy()
+            await self.destroy(False)
         except SessionNotExists:
             pass
 

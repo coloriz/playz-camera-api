@@ -184,17 +184,16 @@ async def handle_get_session(request: web.Request):
             return web.json_response({'session': str(session)}, status=201)
         elif cmd == 'exit':
             session = session_manager.session
-            items = await session.stop()
+            await session_manager.destroy(upload=True)
             # Upload items
             upload_path = Path(f'{session.uid}/{session.sid}/')
-            uploader.put_items(upload_path, items)
             return web.json_response({
                 'session': str(session),
                 'uri': urljoin(config['upload_root'], str(upload_path))
             })
         elif cmd == 'interrupt':
             session = session_manager.session
-            await session_manager.destroy()
+            await session_manager.destroy(upload=False)
             return web.json_response({'session': str(session)})
         else:
             raise ValueError(f"Unknown cmd={cmd}. should be one of [enter, exit, interrupt].")
