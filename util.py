@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryFile
-from typing import NamedTuple, Optional, NoReturn, Iterable, BinaryIO
+from typing import NamedTuple, Optional, NoReturn, BinaryIO, Tuple, Iterable
 
 from aiohttp import ClientSession, FormData
 
@@ -36,11 +36,13 @@ class Event:
             await handler(*args, **kwargs)
 
 
-async def convert_raw_video_to_mp4_stream(raw_stream: BinaryIO,
-                                          framerate: float,
-                                          ffmpeg_bin: str = 'ffmpeg') -> BinaryIO:
-    mp4_stream = TemporaryFile()
-    proc = await asyncio.create_subprocess_exec(
+async def containerize_raw_video(raw_stream: BinaryIO,
+                                 framerate: float,
+                                 fmt: str,
+                                 extra_options: Optional[Iterable[str]] = None,
+                                 ffmpeg_bin: str = 'ffmpeg') -> BinaryIO:
+    video = TemporaryFile()
+    cmd = [
         ffmpeg_bin,
         '-hide_banner',
         '-loglevel', 'error',
@@ -48,18 +50,23 @@ async def convert_raw_video_to_mp4_stream(raw_stream: BinaryIO,
         '-i', '-',
         '-an',
         '-c:v', 'copy',
-        '-f', 'mp4',
-        '-movflags', 'empty_moov',
-        '-',
+        '-f', fmt
+    ]
+    if extra_options:
+        cmd.extend(extra_options)
+    cmd.extend(['-'])
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
         stdin=raw_stream,
-        stdout=mp4_stream,
+        stdout=video,
         stderr=None
     )
     await proc.wait()
 
-    mp4_stream.seek(0)
+    video.seek(0)
     # Issue: aiohttp FormData serializer doesn't detect TemporaryFileWrapper(NamedTemporaryFile) as IOBase.
-    return mp4_stream
+    return video
 
 
 def bytes_for_humans(n: int) -> str:
@@ -73,23 +80,21 @@ def bytes_for_humans(n: int) -> str:
 class MediaContainer(NamedTuple):
     file: BinaryIO
     mimetype: str
-    captured_at: datetime
+    timestamp: datetime
     framerate: Optional[float] = None
 
 
 class MediaUploader(metaclass=Singleton):
-    def __init__(self, upload_endpoint: str, module_id: str, token: str, workers: int = 4) -> NoReturn:
+    def __init__(self, upload_endpoint: str, token: str, workers: int = 4) -> NoReturn:
         self._upload_endpoint = upload_endpoint
-        self._module_id = module_id
         self._token = token
 
         # Create worker tasks to process the queue concurrently.
         self._tasks = [asyncio.create_task(self._worker(f'worker-{i}')) for i in range(workers)]
-        self._q = asyncio.Queue()
+        self._q: "asyncio.Queue[Tuple[Path, MediaContainer]]" = asyncio.Queue()
 
-    def put_items(self, upload_path: Path, items: Iterable[MediaContainer]) -> NoReturn:
-        for item in items:
-            self._q.put_nowait((upload_path, item))
+    def put(self, upload_path: Path, item: MediaContainer) -> NoReturn:
+        self._q.put_nowait((upload_path, item))
 
     async def dispose(self) -> NoReturn:
         # Wait until the queue is fully processed.
@@ -102,9 +107,6 @@ class MediaUploader(metaclass=Singleton):
         # Wait until all worker tasks are cancelled.
         await asyncio.gather(*self._tasks, return_exceptions=True)
 
-    def make_filename(self, captured_at: datetime, ext: str) -> str:
-        return f'{self._module_id}-{captured_at.strftime("%Y%m%d%H%M%S")}{ext}'
-
     async def _worker(self, name: str) -> NoReturn:
         session = ClientSession()
         try:
@@ -113,26 +115,11 @@ class MediaUploader(metaclass=Singleton):
                 upload_path, media = await self._q.get()
                 file = media.file
                 mimetype = media.mimetype
-                captured_at = media.captured_at
+                framerate = media.framerate
 
-                ext = ''
-                if media.mimetype.startswith('image/'):
-                    subtype = media.mimetype[6:].lower()
-                    if subtype == 'jpeg':
-                        ext = '.jpg'
-                    elif subtype == 'png':
-                        ext = '.png'
-                elif media.mimetype.startswith('video/'):
-                    ext = '.mp4'
+                if mimetype.startswith('video/'):
                     # Convert to mp4
-                    file = await convert_raw_video_to_mp4_stream(file, media.framerate)
-
-                # Check if ext is set
-                if not ext:
-                    log.warning('ext is not set!')
-
-                filename = self.make_filename(captured_at, ext)
-                upload_path_full = f'/{upload_path / filename}'
+                    file = await containerize_raw_video(file, framerate, 'mp4', ['-movflags', 'empty_moov'])
 
                 # Get the size of a file object
                 file.seek(0, 2)
@@ -142,10 +129,10 @@ class MediaUploader(metaclass=Singleton):
                 form = FormData()
                 form.add_field('token', self._token)
                 # Prepend "/" to path
-                form.add_field('upload_path', upload_path_full)
-                form.add_field('upload', file, content_type=mimetype, filename=filename)
+                form.add_field('upload_path', f'/{upload_path}')
+                form.add_field('upload', file, content_type=mimetype, filename=upload_path.name)
 
-                log.info(f'{name}: upload_path: {upload_path_full}, size: {bytes_for_humans(filesize)}')
+                log.info(f'{name}: upload_path: /{upload_path}, size: {bytes_for_humans(filesize)}')
 
                 async with session.post(self._upload_endpoint, data=form) as res:
                     log.info(f'{name}: Response from the server: {repr(res)}, {await res.text()}')

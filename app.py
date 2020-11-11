@@ -46,10 +46,11 @@ async def initialize(app: web.Application):
     cam.exposure_mode = opt.exposure_mode
     app['camera'] = cam
     # Item uploader
-    uploader = MediaUploader(opt.upload_endpoint, opt.module_id, opt.token)
+    uploader = MediaUploader(opt.upload_endpoint, opt.token)
     app['uploader'] = uploader
     # One and only session manager
-    app['session_manager'] = SessionManager(opt.session_timeout, uploader)
+    path_fmt = f'{{uid}}/{{sid}}/{opt.module_id}-{{timestamp:%Y%m%d%H%M%S}}{{ext}}'
+    app['session_manager'] = SessionManager(opt.session_timeout, uploader, path_fmt)
     # Settings
     app['bitrate'] = opt.bitrate
     app['quality'] = opt.quality

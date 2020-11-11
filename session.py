@@ -3,7 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryFile
 from time import timezone
-from typing import Optional, NoReturn, List
+from typing import Optional, NoReturn, List, Tuple
 
 from picamera import PiCamera, PiCameraAlreadyRecording, PiCameraNotRecording
 
@@ -124,11 +124,11 @@ class Session:
                 await event.wait()
                 stream = TemporaryFile()
                 self._cam.capture(stream, image_format, use_video_port=True)
-                captured_at = datetime.datetime.now(self._tz)
+                timestamp = datetime.datetime.now(self._tz)
                 filesize = stream.tell()
                 stream.seek(0)
-                self._items.append(MediaContainer(stream, self._image_mime_type, captured_at))
-                log.debug(f'New image captured at {captured_at.isoformat()}. ({bytes_for_humans(filesize)})')
+                self._items.append(MediaContainer(stream, self._image_mime_type, timestamp))
+                log.debug(f'New image captured at {timestamp.isoformat()}. ({bytes_for_humans(filesize)})')
                 event.clear()
         except asyncio.CancelledError:
             pass
@@ -163,12 +163,13 @@ class Session:
 
 
 class SessionManager(metaclass=Singleton):
-    def __init__(self, session_timeout: float, uploader: Optional[MediaUploader] = None) -> NoReturn:
+    def __init__(self, session_timeout: float, uploader: MediaUploader, path_fmt: str) -> NoReturn:
         self.__instance: Optional[Session] = None
         self._lock: asyncio.Lock = asyncio.Lock()
         self._timeout: float = session_timeout
         self._task_watchdog: Optional[asyncio.Task] = None
-        self._uploader = uploader
+        self._uploader: MediaUploader = uploader
+        self._path_fmt: str = path_fmt
 
     async def _empty_session(self) -> NoReturn:
         self.__instance = None
@@ -201,18 +202,39 @@ class SessionManager(metaclass=Singleton):
         self._task_watchdog = asyncio.create_task(self._timeout_watchdog())
         return self.__instance
 
-    async def destroy(self, upload: bool = True) -> List[MediaContainer]:
+    async def destroy(self, upload: bool = True) -> Tuple[Session, List[Path]]:
         async with self._lock:
             session = self.__instance
             if not session:
                 raise SessionNotExists
             items = await self.__instance.stop()
+
+        path_list = []
         if upload:
-            assert self._uploader is not None, 'Uploader not specified.'
             # Upload items
-            upload_path = Path(f'{session.uid}/{session.sid}/')
-            self._uploader.put_items(upload_path, items)
-        return items
+            fmt = self._path_fmt
+            for item in items:
+                # Determine a file extension based on its mimetype
+                ext = ''
+                if item.mimetype.startswith('image/'):
+                    subtype = item.mimetype[6:].lower()
+                    if subtype == 'jpeg':
+                        ext = '.jpg'
+                    elif subtype == 'png':
+                        ext = '.png'
+                elif item.mimetype.startswith('video/'):
+                    ext = '.mp4'
+
+                # Check if ext is set
+                if not ext:
+                    log.warning('ext is not set!')
+
+                upload_path = Path(fmt.format(uid=session.uid, sid=session.sid, timestamp=item.timestamp, ext=ext))
+                path_list.append(upload_path)
+                # Put the item in the uploader's queue
+                self._uploader.put(upload_path, item)
+
+        return session, path_list
 
     async def destroy_silently(self) -> NoReturn:
         try:

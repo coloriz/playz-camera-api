@@ -44,18 +44,18 @@ async def capture_video(cam: PiCamera, delay: float, timeout: float, video_forma
 
 
 async def capture_image_and_upload(cam: PiCamera, delay: float,
-                                   uploader: MediaUploader, upload_path: Path, captured_at: datetime):
+                                   uploader: MediaUploader, upload_path: Path, timestamp: datetime):
     """Capture an image and upload"""
     stream = await capture_image(cam, delay, 'jpeg')
-    uploader.put_items(upload_path, [MediaContainer(stream, 'image/jpeg', captured_at)])
+    uploader.put(upload_path, MediaContainer(stream, 'image/jpeg', timestamp))
 
 
 async def capture_video_and_upload(cam: PiCamera, delay: float, timeout: float,
-                                   uploader: MediaUploader, upload_path: Path, captured_at: datetime,
+                                   uploader: MediaUploader, upload_path: Path, timestamp: datetime,
                                    **kwargs):
     """Capture a video and upload"""
     stream = await capture_video(cam, delay, timeout, 'h264', **kwargs)
-    uploader.put_items(upload_path, [MediaContainer(stream, 'video/H264', captured_at, float(cam.framerate))])
+    uploader.put(upload_path, MediaContainer(stream, 'video/H264', timestamp, float(cam.framerate)))
 
 
 def error_response(error: Exception, msg: Optional[str] = None, code: int = 500):
@@ -89,6 +89,7 @@ async def handle_post_camera(request: web.Request):
     config = request.config_dict
     cam: PiCamera = config['camera']
     uploader: MediaUploader = config['uploader']
+    module_id: str = config['module_id']
     try:
         params = await request.json()
         uid = int(params['uid'])
@@ -97,15 +98,15 @@ async def handle_post_camera(request: web.Request):
         delay = float(params.get('delay', config['delay']))
         timeout = float(params.get('timeout', config['timeout']))
         mode = params.get('mode', 'video')
-        upload_path = Path(f'{uid}/{entry_datetime}/')
-        captured_at = datetime.now()
+        timestamp = datetime.now()
+        upload_path = Path(f'{uid}/{entry_datetime}/{module_id}-{timestamp:%Y%m%d%H%M%S}')
         if mode == 'image':
-            coro = capture_image_and_upload(cam, delay, uploader, upload_path, captured_at)
-            filename = uploader.make_filename(captured_at, '.jpg')
+            upload_path = upload_path.with_suffix('.jpg')
+            coro = capture_image_and_upload(cam, delay, uploader, upload_path, timestamp)
         elif mode == 'video':
-            coro = capture_video_and_upload(cam, delay, timeout, uploader, upload_path, captured_at,
+            upload_path = upload_path.with_suffix('.mp4')
+            coro = capture_video_and_upload(cam, delay, timeout, uploader, upload_path, timestamp,
                                             level='4.2', bitrate=config['bitrate'], quality=config['quality'])
-            filename = uploader.make_filename(captured_at, '.mp4')
         else:
             raise ValueError(f"Unknown 'mode': {mode}. should be either 'image' or 'video'.")
     except KeyError as e:
@@ -116,7 +117,7 @@ async def handle_post_camera(request: web.Request):
     # Run tasks asyncly
     asyncio.create_task(coro)
 
-    return web.json_response({'uri': urljoin(config['upload_root'], str(upload_path / filename))})
+    return web.json_response({'uri': urljoin(config['upload_root'], str(upload_path))})
 
 
 @routes.get('/camera/settings')
@@ -169,7 +170,6 @@ async def handle_get_session(request: web.Request):
     config = request.config_dict
     cam: PiCamera = config['camera']
     session_manager: SessionManager = config['session_manager']
-    uploader: MediaUploader = config['uploader']
     try:
         cmd = request.query['cmd']
         if cmd == 'enter':
@@ -183,17 +183,13 @@ async def handle_get_session(request: web.Request):
                           level='4.2', bitrate=config['bitrate'], quality=config['quality'])
             return web.json_response({'session': str(session)}, status=201)
         elif cmd == 'exit':
-            session = session_manager.session
-            await session_manager.destroy(upload=True)
-            # Upload items
-            upload_path = Path(f'{session.uid}/{session.sid}/')
+            session, path_list = await session_manager.destroy(upload=True)
             return web.json_response({
                 'session': str(session),
-                'uri': urljoin(config['upload_root'], str(upload_path))
+                'uri_list': [urljoin(config['upload_root'], str(p)) for p in path_list]
             })
         elif cmd == 'interrupt':
-            session = session_manager.session
-            await session_manager.destroy(upload=False)
+            session, _ = await session_manager.destroy(upload=False)
             return web.json_response({'session': str(session)})
         else:
             raise ValueError(f"Unknown cmd={cmd}. should be one of [enter, exit, interrupt].")
