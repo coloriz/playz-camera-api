@@ -1,5 +1,6 @@
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 import logging
+import os
 
 from aiohttp import web
 from picamera import PiCamera
@@ -33,6 +34,11 @@ parser.add_argument('--request-port', default=8080, type=int, help='port to list
 parser.add_argument('--debug', action='store_true', help='enable debug mode')
 
 opt = parser.parse_args()
+
+opt.upload_endpoint = os.environ.get('UPLOAD_ENDPOINT', opt.upload_endpoint)
+opt.upload_root = os.environ.get('UPLOAD_ROOT', opt.upload_root)
+opt.token = os.environ.get('TOKEN', opt.token)
+opt.module_id = os.environ.get('MODULE_ID', opt.module_id)
 
 # Print options
 print(' Settings '.center(40, '='))

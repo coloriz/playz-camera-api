@@ -1,0 +1,6 @@
+services:
+  playz-camera-api:
+    restart: unless-stopped
+    env_file: ./prod.env
+    ports:
+      - "80:8080"
