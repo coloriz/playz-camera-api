@@ -14,4 +14,4 @@ COPY . .
 ENV LD_LIBRARY_PATH=/opt/vc/lib
 ENV PATH=$PATH:/opt/vc/bin
 
-ENTRYPOINT ["python", "app.py"]
+ENTRYPOINT ["python", "-u", "app.py"]
