@@ -34,6 +34,12 @@ parser.add_argument('--debug', action='store_true', help='enable debug mode')
 
 opt = parser.parse_args()
 
+# Print options
+print(' Settings '.center(40, '='))
+for k, v in opt.__dict__.items():
+    print(f'  {k!s}={v!r}')
+print('=' * 40 + '\n')
+
 logging.basicConfig(level=logging.DEBUG if opt.debug else logging.INFO)
 
 
