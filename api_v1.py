@@ -79,6 +79,7 @@ routes = web.RouteTableDef()
 
 @routes.get('/camera')
 async def handle_get_camera(request: web.Request):
+    """Retrieve whether the camera is recording"""
     cam: PiCamera = request.config_dict['camera']
     return web.json_response({'recording': cam.recording})
 
@@ -86,11 +87,13 @@ async def handle_get_camera(request: web.Request):
 @routes.post('/camera')
 @assert_camera_idle
 async def handle_post_camera(request: web.Request):
+    """Create asynchronous capturing and uploading tasks"""
     config = request.config_dict
     cam: PiCamera = config['camera']
     uploader: MediaUploader = config['uploader']
     module_id: str = config['module_id']
     try:
+        # Parse request body
         params = await request.json()
         uid = int(params['uid'])
         entry_datetime = str(params['entry_datetime'])
@@ -98,6 +101,8 @@ async def handle_post_camera(request: web.Request):
         delay = float(params.get('delay', config['delay']))
         timeout = float(params.get('timeout', config['timeout']))
         mode = params.get('mode', 'video')
+
+        # Create a capturing task
         timestamp = datetime.now()
         upload_path = Path(f'{uid}/{entry_datetime}/{module_id}-{timestamp:%Y%m%d%H%M%S}')
         if mode == 'image':
@@ -114,7 +119,7 @@ async def handle_post_camera(request: web.Request):
     except Exception as e:
         return error_response(e)
 
-    # Run tasks asyncly
+    # Run the task asyncly
     asyncio.create_task(coro)
 
     return web.json_response({'uri': urljoin(config['upload_root'], str(upload_path))})
@@ -122,6 +127,7 @@ async def handle_post_camera(request: web.Request):
 
 @routes.get('/camera/settings')
 async def handle_get_camera_settings(request: web.Request):
+    """Retrieve camera settings"""
     cam: PiCamera = request.config_dict['camera']
     width, height = cam.resolution
     return web.json_response({
@@ -167,28 +173,33 @@ async def handle_put_camera_settings(request: web.Request):
 
 @routes.get('/session')
 async def handle_get_session(request: web.Request):
+    """Handle sessions"""
     config = request.config_dict
     cam: PiCamera = config['camera']
     session_manager: SessionManager = config['session_manager']
     try:
         cmd = request.query['cmd']
         if cmd == 'enter':
+            # Parse request queries
             uid = int(request.query['uid'])
             entry_datetime = request.query['entry_datetime']
             assert entry_datetime.isdigit(), "'entry_datetime' should be the form of 'YYYYmmddHHMMSS'"
             capture_interval = float(request.query.get('capture_interval', config['capture_interval']))
 
+            # Create a new session
             session = session_manager.create(cam, uid, entry_datetime)
             session.start(capture_interval, 'jpeg', 'h264',
                           level='4.2', bitrate=config['bitrate'], quality=config['quality'])
             return web.json_response({'session': str(session)}, status=201)
         elif cmd == 'exit':
+            # Destroy the running session and upload recorded items
             session, path_list = await session_manager.destroy(upload=True)
             return web.json_response({
                 'session': str(session),
                 'uri_list': [urljoin(config['upload_root'], str(p)) for p in path_list]
             })
         elif cmd == 'interrupt':
+            # Abort any running session
             session, _ = await session_manager.destroy(upload=False)
             return web.json_response({'session': str(session)})
         else:

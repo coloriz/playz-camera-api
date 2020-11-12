@@ -12,18 +12,18 @@ parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter, add_help=
 parser.add_argument('--help', action='help', help='show this help message and exit')
 parser.add_argument('-w', '--width', default=1640, type=int, help='set image width')
 parser.add_argument('-h', '--height', default=1232, type=int, help='set image height')
-parser.add_argument('-fps', '--framerate', default=40, type=float, help='specify the frames per second to record')
+parser.add_argument('-fps', '--framerate', default=40.0, type=float, help='specify the frames per second to record')
 parser.add_argument('-rot', '--rotation', default=0, type=int, choices=[0, 90, 180, 270], help='set image rotation')
 parser.add_argument('-em', '--exposure-mode', default='sports', choices=PiCamera.EXPOSURE_MODES.keys(),
                     help='set the exposure mode')
 parser.add_argument('-b', '--bitrate', default=6000000, type=int, help='set bitrate')
 parser.add_argument('-q', '--quality', default=23, type=int,
                     help='the quality that the encoder should attempt to maintain')
-parser.add_argument('-d', '--delay', default=0, type=float, help='default delay before recording (in second)')
-parser.add_argument('-t', '--timeout', default=5, type=float, help='default time to capture for (in second)')
-parser.add_argument('-st', '--session-timeout', default=300, type=float,
+parser.add_argument('-d', '--delay', default=0.0, type=float, help='default delay before recording (in second)')
+parser.add_argument('-t', '--timeout', default=5.0, type=float, help='default time to capture for (in second)')
+parser.add_argument('-st', '--session-timeout', default=300.0, type=float,
                     help='default period of time before interrupting session (in seconds)')
-parser.add_argument('-ci', '--capture-interval', default=5, type=float,
+parser.add_argument('-ci', '--capture-interval', default=5.0, type=float,
                     help='default image capture interval during a session (in seconds)')
 parser.add_argument('--upload-endpoint', default='')
 parser.add_argument('--upload-root', default='')
@@ -65,7 +65,6 @@ async def initialize(app: web.Application):
     app['capture_interval'] = opt.capture_interval
     app['upload_endpoint'] = opt.upload_endpoint
     app['upload_root'] = opt.upload_root
-    app['token'] = opt.token
     app['module_id'] = opt.module_id
 
 

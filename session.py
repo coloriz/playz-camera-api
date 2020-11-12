@@ -31,21 +31,26 @@ class SessionInvalidError(Exception):
 
 class Session:
     def __init__(self, camera: PiCamera, uid: int, sid: str) -> NoReturn:
+        # Indicate the status of this session
         self._in_progress = False
         self._disposed = False
+
         self._cam = camera
         self._uid = uid
         self._sid = sid
+
         self._raw_stream = TemporaryFile()
         self._items = []
+
         self._task_image_capture = None
-        self._video_recording_started_at = None
+        self._started_at = None
         self._video_mime_type = None
         self._image_mime_type = None
 
-        self.on_stopping = Event()
-        self.on_disposed = Event()
+        self.on_stopping = Event()  # Invoked just before stopping
+        self.on_disposed = Event()  # Invoked after fully disposed
 
+        # Get local timezone to properly print timestamps
         self._tz = datetime.timezone(datetime.timedelta(seconds=-timezone))
 
     def __str__(self) -> str:
@@ -74,14 +79,17 @@ class Session:
             raise PiCameraAlreadyRecording
         # Start recording a video
         self._video_mime_type = f'video/{video_format.upper()}'
-        self._video_recording_started_at = datetime.datetime.now(self._tz)
+        self._started_at = datetime.datetime.now(self._tz)
         self._cam.start_recording(self._raw_stream, video_format, **kwargs)
+        # Check if any error occured
         self._cam.wait_recording(0)
-        log.debug(f'Video recording started at {self._video_recording_started_at.isoformat()}. (MIME type: {self._video_mime_type})')
+        log.debug(f'Video recording started at {self._started_at.isoformat()}. (MIME type: {self._video_mime_type})')
+
         # Start continuous captures
         self._image_mime_type = f'image/{image_format}'
         self._task_image_capture = asyncio.create_task(self._capture_images(image_capture_interval, image_format))
         log.debug(f'Continuous image capturing started. (MIME type: {self._image_mime_type})')
+
         self._in_progress = True
         log.info(f'{self}: Session has started.')
 
@@ -96,23 +104,27 @@ class Session:
             raise PiCameraNotRecording
         # Fire on_stopping event
         await self.on_stopping()
+
         # Stop video recording
         self._cam.stop_recording()
         log.debug(f'Video recording stopped.')
+
         # Stop image capturing
         self._task_image_capture.cancel()
         await self._task_image_capture
         log.debug(f'Image capturing stopped.')
         log.info(f'Total {len(self._items)} images captured.')
+
         # Put the recorded video into the list.
         self._raw_stream.seek(0)
         self._items.append(
             MediaContainer(
                 self._raw_stream,
                 self._video_mime_type,
-                self._video_recording_started_at,
+                self._started_at,
                 float(self._cam.framerate))
         )
+
         self._in_progress = False
         await self.dispose()
 
