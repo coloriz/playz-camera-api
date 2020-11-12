@@ -1,9 +1,10 @@
 import asyncio
 import logging
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryFile
-from typing import NamedTuple, Optional, NoReturn, BinaryIO, Tuple, Iterable
+from typing import NamedTuple, Optional, NoReturn, BinaryIO, Tuple, Iterable, Union
 
 from aiohttp import ClientSession, FormData
 
@@ -36,7 +37,7 @@ class Event:
             await handler(*args, **kwargs)
 
 
-async def containerize_raw_video(raw_stream: BinaryIO,
+async def containerize_raw_video(raw_stream: Union[BinaryIO, BytesIO],
                                  framerate: float,
                                  fmt: str,
                                  extra_options: Optional[Iterable[str]] = None,
@@ -56,13 +57,23 @@ async def containerize_raw_video(raw_stream: BinaryIO,
         cmd.extend(extra_options)
     cmd.extend(['-'])
 
+    bytesio_input = isinstance(raw_stream, BytesIO)
+
     proc = await asyncio.create_subprocess_exec(
         *cmd,
-        stdin=raw_stream,
+        stdin=raw_stream if not bytesio_input else asyncio.subprocess.PIPE,
         stdout=video,
-        stderr=None
+        stderr=asyncio.subprocess.PIPE
     )
-    await proc.wait()
+
+    if bytesio_input:
+        proc.stdin.write(raw_stream.getvalue())
+        proc.stdin.close()
+
+    # Wait for process to terminate
+    _, err = await proc.communicate()
+    if err:
+        log.error(f'FFmpeg error: {err.decode()}')
 
     video.seek(0)
     # Issue: aiohttp FormData serializer doesn't detect TemporaryFileWrapper(NamedTemporaryFile) as IOBase.
